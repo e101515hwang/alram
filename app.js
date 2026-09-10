@@ -177,7 +177,6 @@ const WELLNESS_TIPS = [
 class AppState {
   constructor() {
     // 기본 환경설정 로드 또는 기본값 지정
-    const saved = localStorage.getItem('break_timer_classroom_cfg');
     const defaults = {
       className: '3학년 2반',
       currentSubjectKey: 'math',
@@ -186,14 +185,21 @@ class AppState {
       soundEnabled: true,
       warningChimeEnabled: true,
       soundVolume: 0.8,
-      mediaMode: 'preset', // 'preset', 'image', 'video'
-      mediaUrl: '',
+      mediaMode: 'video', // 유튜브 영상을 기본 모드로 설정
+      mediaUrl: 'https://youtu.be/_GV1AjmDDgY?si=Y9zcX13GVAkqlkZv',
       customChecklist: '',
       customNotice: '',
       customTopic: ''
     };
 
     this.cfg = saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
+
+    // 만약 기존 저장된 미디어 URL이 비어있거나 이전 기본값인 경우 요청된 유튜브 영상으로 자동 업그레이드
+    if (!this.cfg.mediaUrl || this.cfg.mediaUrl.trim() === '') {
+      this.cfg.mediaMode = 'video';
+      this.cfg.mediaUrl = 'https://youtu.be/_GV1AjmDDgY?si=Y9zcX13GVAkqlkZv';
+      this.save();
+    }
 
     // 런타임 타이머 상태
     this.baseDurationSeconds = this.cfg.totalDurationSeconds || 600; // 선택된 기준 시간 보존
@@ -227,6 +233,9 @@ class BreakTimerApp {
     this.bindEvents();
     this.applyTheme(this.state.cfg.theme);
     this.applySubject(this.state.cfg.currentSubjectKey);
+    if (this.state.cfg.mediaMode === 'video') {
+      this.switchTab('tabMedia');
+    }
     this.initTimerDisplay();
     this.startClockTicker();
     this.startWellnessTicker();
@@ -492,6 +501,11 @@ class BreakTimerApp {
     this.timerStateBadge.textContent = '진행 중';
     this.timerStateBadge.style.color = '';
 
+    // 쉬는 시간 시작 시 비디오 모드이면 영상 탭으로 자동 전환
+    if (this.state.cfg.mediaMode === 'video') {
+      this.switchTab('tabMedia');
+    }
+
     clearInterval(this.state.timerInterval);
     const stepTime = 1000;
     this.state.timerInterval = setInterval(() => {
@@ -700,16 +714,40 @@ class BreakTimerApp {
     if (mode === 'image' && url) {
       this.mediaEmbedPane.innerHTML = `<img src="${url}" class="media-image-view" alt="수업 자료 이미지" onerror="this.parentElement.innerHTML='<div class=\\'media-placeholder\\'>⚠️ 이미지를 불러올 수 없습니다. URL을 확인해 주세요.</div>'">`;
     } else if (mode === 'video' && url) {
-      // 유튜브 임베드 변환
-      let embedUrl = url;
-      if (url.includes('youtube.com/watch?v=')) {
-        const videoId = url.split('watch?v=')[1].split('&')[0];
-        embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0`;
-      } else if (url.includes('youtu.be/')) {
-        const videoId = url.split('youtu.be/')[1].split('?')[0];
-        embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0`;
+      // 유튜브 ID 정밀 추출 (youtu.be, watch?v=, embed, shorts 등 모든 URL 형태 지원)
+      let videoId = '';
+      const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+      if (match && match[1]) {
+        videoId = match[1];
       }
-      this.mediaEmbedPane.innerHTML = `<iframe class="media-embed-frame" src="${embedUrl}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+
+      let embedUrl = '';
+      if (videoId) {
+        // autoplay=1: 자동재생, mute=1: 브라우저 차단 방지, loop=1: 쉬는시간 무한반복, controls=1: 볼륨 및 타임라인 조작 활성화
+        embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=1&rel=0&enablejsapi=1`;
+      } else {
+        embedUrl = url;
+      }
+
+      this.mediaEmbedPane.innerHTML = `
+        <div class="video-wrapper">
+          <iframe class="media-embed-frame" 
+            src="${embedUrl}" 
+            title="쉬는 시간 영상 플레이어"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+            allowfullscreen>
+          </iframe>
+          <div class="video-audio-hint" id="videoAudioHint">
+            <span>🔊</span> 소리를 켜시려면 영상 하단의 스피커(음소거 해제) 아이콘을 눌러주세요
+          </div>
+        </div>
+      `;
+
+      // 7초 후 힌트 메시지 페이드아웃
+      setTimeout(() => {
+        const hint = document.getElementById('videoAudioHint');
+        if (hint) hint.style.opacity = '0';
+      }, 7000);
     } else {
       this.mediaEmbedPane.innerHTML = `
         <div class="media-placeholder">
